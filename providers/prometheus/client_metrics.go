@@ -23,6 +23,7 @@ type ClientMetrics struct {
 	clientStreamRecvHistogram *prometheus.HistogramVec
 	// clientStreamSendHistogram can be nil
 	clientStreamSendHistogram *prometheus.HistogramVec
+	clientInFlightGauge       *prometheus.GaugeVec
 }
 
 // NewClientMetrics returns a new ClientMetrics object.
@@ -59,6 +60,12 @@ func NewClientMetrics(opts ...ClientMetricsOption) *ClientMetrics {
 		clientHandledHistogram:    config.clientHandledHistogram,
 		clientStreamRecvHistogram: config.clientStreamRecvHistogram,
 		clientStreamSendHistogram: config.clientStreamSendHistogram,
+
+		clientInFlightGauge: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "grpc_client_requests_in_flight",
+				Help: "A number of current client RPCs in flight.",
+			}, []string{"grpc_type", "grpc_service", "grpc_method"}),
 	}
 }
 
@@ -79,6 +86,7 @@ func (m *ClientMetrics) Describe(ch chan<- *prometheus.Desc) {
 	if m.clientStreamSendHistogram != nil {
 		m.clientStreamSendHistogram.Describe(ch)
 	}
+	m.clientInFlightGauge.Describe(ch)
 }
 
 // Collect is called by the Prometheus registry when collecting
@@ -98,6 +106,7 @@ func (m *ClientMetrics) Collect(ch chan<- prometheus.Metric) {
 	if m.clientStreamSendHistogram != nil {
 		m.clientStreamSendHistogram.Collect(ch)
 	}
+	m.clientInFlightGauge.Collect(ch)
 }
 
 // UnaryClientInterceptor is a gRPC client-side interceptor that provides Prometheus monitoring for Unary RPCs.

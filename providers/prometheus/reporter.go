@@ -45,11 +45,13 @@ func (r *reporter) PostMsgSend(_ any, _ error, sendDuration time.Duration) {
 	switch r.kind {
 	case KindServer:
 		r.incrementWithExemplar(r.serverMetrics.serverStreamMsgSent, string(r.typ), r.service, r.method)
+		r.serverMetrics.serverInFlightGauge.WithLabelValues(string(r.typ), r.service, r.method).Inc()
 	case KindClient:
 		r.incrementWithExemplar(r.clientMetrics.clientStreamMsgSent, string(r.typ), r.service, r.method)
 		if r.clientMetrics.clientStreamSendHistogram != nil {
 			r.observeWithExemplar(r.clientMetrics.clientStreamSendHistogram, sendDuration.Seconds(), string(r.typ), r.service, r.method)
 		}
+		r.clientMetrics.clientInFlightGauge.WithLabelValues(string(r.typ), r.service, r.method).Inc()
 	}
 }
 
@@ -57,11 +59,13 @@ func (r *reporter) PostMsgReceive(_ any, _ error, recvDuration time.Duration) {
 	switch r.kind {
 	case KindServer:
 		r.incrementWithExemplar(r.serverMetrics.serverStreamMsgReceived, string(r.typ), r.service, r.method)
+		r.serverMetrics.serverInFlightGauge.WithLabelValues(string(r.typ), r.service, r.method).Dec()
 	case KindClient:
 		r.incrementWithExemplar(r.clientMetrics.clientStreamMsgReceived, string(r.typ), r.service, r.method)
 		if r.clientMetrics.clientStreamRecvHistogram != nil {
 			r.observeWithExemplar(r.clientMetrics.clientStreamRecvHistogram, recvDuration.Seconds(), string(r.typ), r.service, r.method)
 		}
+		r.clientMetrics.clientInFlightGauge.WithLabelValues(string(r.typ), r.service, r.method).Dec()
 	}
 }
 
