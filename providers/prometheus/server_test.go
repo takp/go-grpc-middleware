@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -53,6 +54,7 @@ func (s *ServerInterceptorTestSuite) SetupTest() {
 	s.serverMetrics.serverHandledHistogram.Reset()
 	s.serverMetrics.serverStreamMsgReceived.Reset()
 	s.serverMetrics.serverStreamMsgSent.Reset()
+	s.serverMetrics.serverInFlightGauge.Reset()
 	s.serverMetrics.InitializeMetrics(s.Server)
 }
 
@@ -75,10 +77,65 @@ func (s *ServerInterceptorTestSuite) TestRegisterPresetsStuff() {
 		{"grpc_server_handled_total", []string{testpb.TestServiceFullName, "PingList", "server_stream", "Aborted"}},
 		{"grpc_server_handled_total", []string{testpb.TestServiceFullName, "PingEmpty", "unary", "FailedPrecondition"}},
 		{"grpc_server_handled_total", []string{testpb.TestServiceFullName, "PingEmpty", "unary", "ResourceExhausted"}},
+		{"grpc_server_requests_in_flight", []string{testpb.TestServiceFullName, "Ping", "unary"}},
+		{"grpc_server_requests_in_flight", []string{testpb.TestServiceFullName, "PingEmpty", "unary"}},
+		{"grpc_server_requests_in_flight", []string{testpb.TestServiceFullName, "PingError", "unary"}},
+		{"grpc_server_requests_in_flight", []string{testpb.TestServiceFullName, "PingList", "server_stream"}},
+		{"grpc_server_requests_in_flight", []string{testpb.TestServiceFullName, "PingStream", "bidi_stream"}},
 	} {
 		lineCount := len(fetchPrometheusLines(s.T(), registry, testCase.metricName, testCase.existingLabels...))
 		assert.NotZero(s.T(), lineCount, "metrics must exist for test case %d", testID)
 	}
+}
+
+// Create a handler that waits for a channel to be closed before returning.
+// This is used to simulate a handler that takes a long time to complete.
+// Pass the channel to the handler via the context.
+func (s *ServerInterceptorTestSuite) TestUnaryUpdatesInFlightGaugeWithHandlerInterceptor() {
+	// Create a handler
+	handlerCalled := make(chan struct{})
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		handlerCalled <- struct{}{}
+		return nil, nil
+	}
+
+	// Create a server with the interceptor.
+	interceptor := interceptors.UnaryServerInterceptor(&reportable{
+		opts:          nil,
+		serverMetrics: s.serverMetrics,
+	})
+
+	// Wait for the handler to be called.
+	go func() {
+		resp, err := interceptor(s.SimpleCtx(), &testpb.PingRequest{SleepTimeMs: 10000}, &grpc.UnaryServerInfo{}, handler)
+		assert.Nil(s.T(), resp)
+		assert.Nil(s.T(), err)
+	}()
+
+	time.Sleep(1 * time.Second)
+	//requireValue(s.T(), 1, s.serverMetrics.serverStartedCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
+	//requireValue(s.T(), 1, s.serverMetrics.serverHandledCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty", "OK"))
+
+	requireValue(s.T(), 1, s.serverMetrics.serverInFlightGauge.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
+	requireValue(s.T(), 0, s.serverMetrics.serverInFlightGauge.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
+
+	time.Sleep(2 * time.Second)
+	<-handlerCalled
+}
+
+func (s *ServerInterceptorTestSuite) TestUnaryUpdatesInFlightGauge() {
+	// Start a request, but don't finish it.
+
+	_, err := s.Client.Ping(s.SimpleCtx(), &testpb.PingRequest{SleepTimeMs: 10000})
+	require.NoError(s.T(), err)
+	requireValue(s.T(), 1, s.serverMetrics.serverStartedCounter.WithLabelValues("unary", testpb.TestServiceFullName, "Ping"))
+
+	// TODO: Test in-flight gauge to return value of 1.
+	requireValue(s.T(), 0, s.serverMetrics.serverInFlightGauge.WithLabelValues("unary", testpb.TestServiceFullName, "Ping"))
+
+	// Wait for the request to finish.
+	time.Sleep(200 * time.Millisecond)
+	requireValue(s.T(), 0, s.serverMetrics.serverInFlightGauge.WithLabelValues("unary", testpb.TestServiceFullName, "Ping"))
 }
 
 func (s *ServerInterceptorTestSuite) TestUnaryIncrementsMetrics() {
@@ -87,12 +144,14 @@ func (s *ServerInterceptorTestSuite) TestUnaryIncrementsMetrics() {
 	requireValue(s.T(), 1, s.serverMetrics.serverStartedCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
 	requireValue(s.T(), 1, s.serverMetrics.serverHandledCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty", "OK"))
 	requireValueHistCount(s.T(), 1, s.serverMetrics.serverHandledHistogram.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
+	requireValue(s.T(), 0, s.serverMetrics.serverInFlightGauge.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
 
 	_, err = s.Client.PingError(s.SimpleCtx(), &testpb.PingErrorRequest{ErrorCodeReturned: uint32(codes.FailedPrecondition)})
 	require.Error(s.T(), err)
 	requireValue(s.T(), 1, s.serverMetrics.serverStartedCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingError"))
 	requireValue(s.T(), 1, s.serverMetrics.serverHandledCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingError", "FailedPrecondition"))
 	requireValueHistCount(s.T(), 1, s.serverMetrics.serverHandledHistogram.WithLabelValues("unary", testpb.TestServiceFullName, "PingError"))
+	requireValue(s.T(), 0, s.serverMetrics.serverInFlightGauge.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
 }
 
 func (s *ServerInterceptorTestSuite) TestStartedStreamingIncrementsStarted() {
@@ -141,6 +200,10 @@ func (s *ServerInterceptorTestSuite) TestStreamingIncrementsMetrics() {
 		s.serverMetrics.serverHandledCounter.WithLabelValues("server_stream", testpb.TestServiceFullName, "PingList", "FailedPrecondition"))
 	requireValueWithRetryHistCount(s.SimpleCtx(), s.T(), 2,
 		s.serverMetrics.serverHandledHistogram.WithLabelValues("server_stream", testpb.TestServiceFullName, "PingList"))
+}
+
+func (s *ServerInterceptorTestSuite) TestStreamingUpdatesInFlightGauge() {
+	// TODO: Add test
 }
 
 func (s *ServerInterceptorTestSuite) TestContextCancelledTreatedAsStatus() {

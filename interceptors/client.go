@@ -33,9 +33,12 @@ func StreamClientInterceptor(reportable ClientReportable) grpc.StreamClientInter
 		r := newReport(NewClientCallMeta(method, desc, nil))
 		reporter, newCtx := reportable.ClientReporter(ctx, r.callMeta)
 
+		// TODO: Increment
 		clientStream, err := streamer(newCtx, desc, cc, method, opts...)
+
 		if err != nil {
 			reporter.PostCall(err, time.Since(r.startTime))
+			// TODO: Decrement
 			return nil, err
 		}
 		return &monitoredClientStream{ClientStream: clientStream, startTime: r.startTime, reporter: reporter}, nil

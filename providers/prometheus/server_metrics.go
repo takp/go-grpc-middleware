@@ -18,6 +18,7 @@ type ServerMetrics struct {
 	serverStreamMsgSent     *prometheus.CounterVec
 	// serverHandledHistogram can be nil.
 	serverHandledHistogram *prometheus.HistogramVec
+	serverInFlightGauge    *prometheus.GaugeVec
 }
 
 // NewServerMetrics returns a new ServerMetrics object that has server interceptor methods.
@@ -48,6 +49,11 @@ func NewServerMetrics(opts ...ServerMetricsOption) *ServerMetrics {
 				Help: "Total number of gRPC stream messages sent by the server.",
 			}), []string{"grpc_type", "grpc_service", "grpc_method"}),
 		serverHandledHistogram: config.serverHandledHistogram,
+		serverInFlightGauge: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "grpc_server_requests_in_flight",
+				Help: "A number of current gRPC requests in flight on the server.",
+			}, []string{"grpc_type", "grpc_service", "grpc_method"}),
 	}
 }
 
@@ -62,6 +68,7 @@ func (m *ServerMetrics) Describe(ch chan<- *prometheus.Desc) {
 	if m.serverHandledHistogram != nil {
 		m.serverHandledHistogram.Describe(ch)
 	}
+	m.serverInFlightGauge.Describe(ch)
 }
 
 // Collect is called by the Prometheus registry when collecting
@@ -75,6 +82,7 @@ func (m *ServerMetrics) Collect(ch chan<- prometheus.Metric) {
 	if m.serverHandledHistogram != nil {
 		m.serverHandledHistogram.Collect(ch)
 	}
+	m.serverInFlightGauge.Collect(ch)
 }
 
 // InitializeMetrics initializes all metrics, with their appropriate null
@@ -101,6 +109,7 @@ func (m *ServerMetrics) preRegisterMethod(serviceName string, mInfo *grpc.Method
 	if m.serverHandledHistogram != nil {
 		_, _ = m.serverHandledHistogram.GetMetricWithLabelValues(methodType, serviceName, methodName)
 	}
+	_, _ = m.serverInFlightGauge.GetMetricWithLabelValues(methodType, serviceName, methodName)
 	for _, code := range interceptors.AllCodes {
 		_, _ = m.serverHandledCounter.GetMetricWithLabelValues(methodType, serviceName, methodName, code.String())
 	}

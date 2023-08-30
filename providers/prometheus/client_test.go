@@ -40,6 +40,7 @@ func (s *ClientInterceptorTestSuite) SetupTest() {
 	s.clientMetrics.clientHandledHistogram.Reset()
 	s.clientMetrics.clientStreamMsgReceived.Reset()
 	s.clientMetrics.clientStreamMsgSent.Reset()
+	s.clientMetrics.clientInFlightGauge.Reset()
 }
 
 func (s *ClientInterceptorTestSuite) TestUnaryIncrementsMetrics() {
@@ -49,12 +50,18 @@ func (s *ClientInterceptorTestSuite) TestUnaryIncrementsMetrics() {
 	requireValue(s.T(), 1, s.clientMetrics.clientStartedCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
 	requireValue(s.T(), 1, s.clientMetrics.clientHandledCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty", "OK"))
 	requireValueHistCount(s.T(), 1, s.clientMetrics.clientHandledHistogram.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
+	requireValue(s.T(), 0, s.clientMetrics.clientInFlightGauge.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
 
 	_, err = s.Client.PingError(s.SimpleCtx(), &testpb.PingErrorRequest{ErrorCodeReturned: uint32(codes.FailedPrecondition)})
 	require.Error(s.T(), err)
 	requireValue(s.T(), 1, s.clientMetrics.clientStartedCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingError"))
 	requireValue(s.T(), 1, s.clientMetrics.clientHandledCounter.WithLabelValues("unary", testpb.TestServiceFullName, "PingError", "FailedPrecondition"))
 	requireValueHistCount(s.T(), 1, s.clientMetrics.clientHandledHistogram.WithLabelValues("unary", testpb.TestServiceFullName, "PingError"))
+	requireValue(s.T(), 0, s.clientMetrics.clientInFlightGauge.WithLabelValues("unary", testpb.TestServiceFullName, "PingEmpty"))
+}
+
+func (s *ClientInterceptorTestSuite) TestUnaryUpdatesInFlightGauge() {
+	// TODO: Add test
 }
 
 func (s *ClientInterceptorTestSuite) TestStartedStreamingIncrementsStarted() {
@@ -99,4 +106,8 @@ func (s *ClientInterceptorTestSuite) TestStreamingIncrementsMetrics() {
 	requireValue(s.T(), 2, s.clientMetrics.clientStartedCounter.WithLabelValues("server_stream", testpb.TestServiceFullName, "PingList"))
 	requireValue(s.T(), 1, s.clientMetrics.clientHandledCounter.WithLabelValues("server_stream", testpb.TestServiceFullName, "PingList", "FailedPrecondition"))
 	requireValueHistCount(s.T(), 2, s.clientMetrics.clientHandledHistogram.WithLabelValues("server_stream", testpb.TestServiceFullName, "PingList"))
+}
+
+func (s *ClientInterceptorTestSuite) TestStreamingUpdatesInFlightGauge() {
+	// TODO: Add test
 }

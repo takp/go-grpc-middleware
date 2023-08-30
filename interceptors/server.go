@@ -32,7 +32,10 @@ func StreamServerInterceptor(reportable ServerReportable) grpc.StreamServerInter
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		r := newReport(NewServerCallMeta(info.FullMethod, info, nil))
 		reporter, newCtx := reportable.ServerReporter(ss.Context(), r.callMeta)
+		// TODO: Increment
+
 		err := handler(srv, &monitoredServerStream{ServerStream: ss, newCtx: newCtx, reporter: reporter})
+		// TODO: Decrement in-flight metric
 		reporter.PostCall(err, time.Since(r.startTime))
 		return err
 	}
